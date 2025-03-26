@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trabalho 2 CG - Raymarching</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            overflow: hidden;
+        }
+
+        canvas {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="webgl-canvas"></canvas>
+    <script>
+        // Pegando o elemento canvas e configurando o contexto WebGL
+        const canvas = document.getElementById('webgl-canvas');
+        const gl = canvas.getContext('webgl');
+        
+        if (!gl) {
+            alert('WebGL não é suportado pelo seu navegador!');
+        }
+
+        // Função para ajustar o tamanho do canvas para ocupar toda a tela
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            gl.viewport(0, 0, canvas.width, canvas.height); // Ajustar o viewport do WebGL
+        }
+
+        // Chamando a função de redimensionamento ao carregar e ao redimensionar a janela
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas(); // Redimensiona o canvas ao carregar a página
+
+        // Função para criar o shader
+        function createShader(type, source) {
+            const shader = gl.createShader(type);
+            gl.shaderSource(shader, source);
+            gl.compileShader(shader);
+
+            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                console.error('Erro ao compilar shader:', gl.getShaderInfoLog(shader));
+                gl.deleteShader(shader);
+                return null;
+            }
+
+            return shader;
+        }
+
+        // Vertex shader
+        const vertexShaderSource = `
+            attribute vec4 a_position;
+            varying vec2 v_uv;
+            void main() {
+                gl_Position = a_position;
+                v_uv = a_position.xy * 0.5 + 0.5;
+            }
+        `;
+
+        const vertexShader = createShader(gl.VERTEX_SHADER, vertexShaderSource);
+
+        // Fragment shader
+        const fragmentShaderSource = `
+            precision highp float;
+
+            uniform float iTime;
+            uniform vec2 iResolution;
+            uniform vec2 iMouse;
+
+            // Função de rotação 2D
+            mat2 rot2D(float a) {
+                return mat2(cos(a), -sin(a), sin(a), cos(a));
+            }
+
+            // Função de rotação em X
+            mat3 rotX(float angle) {
+                return mat3(
+                    1.0, 0.0, 0.0,
+                    0.0, cos(angle), -sin(angle),
+                    0.0, sin(angle), cos(angle)
+                );
+            }
+
+            // Função de rotação em Y
+            mat3 rotY(float angle) {
+                return mat3(
+                    cos(angle), 0.0, sin(angle),
+                    0.0, 1.0, 0.0,
+                    -sin(angle), 0.0, cos(angle)
+                );
+            }
+
+            // Função de paleta de cores
+            vec3 palette(float t) {
+                return .5 + .5 * cos(6.28318 * (t + vec3(.3, iMouse.x, .557)));
+            }
+
+            // Função de distância para o link
+            float sdLink(vec3 p, float le, float r1, float r2) {
+                vec3 q = vec3(p.x, max(abs(p.y) - le, 0.0), p.z);
+                return length(vec2(length(q.xy) - r1, q.z)) - r2;
+            }
+
+            // Cena de distância
+            float map(vec3 p, int i, float rotXAngle, float oscY) {
+                p.z += iTime * .4; // Movimento para frente
+
+                // Repetição no espaço
+                p.xy = fract(p.xy) - .5;     // espaçamento: 1
+                p.z = mod(p.z, .25) - .125; // espaçamento: .25
+
+                // Rotação alternada baseada no índice de iteração (i)
+                if (mod(float(i), 2.0) == 0.0) {
+                    p = p * rotX(rotXAngle); // Rotacionar 90 graus em torno do eixo X
+                } else {
+                    p = p * rotY(oscY); // Rotacionar 90 graus em torno do eixo Y
+                }
+
+                // Ajustando o tamanho do link para tornar mais visível
+                // Parâmetros reduzidos
+                return sdLink(p, 0.03, 0.2, 0.015);
+            }
+
+            void main() {
+                vec2 uv = (gl_FragCoord.xy * 2.0 - iResolution.xy) / iResolution.y;
+                vec2 m = (iMouse.xy * 2.0 - iResolution.xy) / iResolution.y;
+                
+                // Inicializando as variáveis de rotação e oscilação
+                float rotXAngle = iMouse.x * 0.3; // Controlando rotação ao redor do eixo X com a posição X do mouse
+                float oscY = iMouse.y * 0.3; // Controlando a oscilação ao redor do eixo Y com a posição Y do mouse
+                
+                // Inicialização
+                vec3 ro = vec3(0, 0, -3.0);         // origem do raio
+                vec3 rd = normalize(vec3(uv, 1.0)); // direção do raio
+                vec3 col = vec3(0.0);               // cor final do pixel
+
+                float t = 0.0; // distância total percorrida
+
+                // Raymarching
+                for (int i = 0; i < 80; i++) {
+                    vec3 p = ro + rd * t; // posição ao longo do raio
+                    
+                    p.xy *= rot2D(t * 0.15 * m.x);     // rotacionar o raio ao redor do eixo z
+                    p.y += sin(t * (m.y + iMouse.y) * 0.5) * 0.35;  // movimentação oscilante do raio
+
+                    float d = map(p, i, rotXAngle, oscY);     // distância atual até a cena
+
+                    t += d;               // marchar o raio
+
+                    if (d < 0.001 || t > 100.0) break; // parar antes se a distância for muito pequena
+                }
+
+                // Colorindo
+                col = palette(t * 0.04 + float(80) * 0.009); // Usando o valor máximo de iterações (80)
+
+                gl_FragColor = vec4(col, 1);
+            }
+        `;
+
+        const fragmentShader = createShader(gl.FRAGMENT_SHADER, fragmentShaderSource);
+
+        // Verificação para garantir que o fragmentShader foi compilado corretamente
+        if (!fragmentShader) {
+            console.error("Erro ao compilar o fragment shader.");
+        }
+
+        // Programa de shader (compilação e link)
+        const program = gl.createProgram();
+        gl.attachShader(program, vertexShader);
+        gl.attachShader(program, fragmentShader);
+        gl.linkProgram(program);
+
+        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+            console.error('Erro ao vincular o programa de shader:', gl.getProgramInfoLog(program));
+        }
+
+        gl.useProgram(program);
+
+        // Criando o buffer de posições para o quadrado que cobrirá toda a tela
+        const vertices = new Float32Array([
+            -1.0, -1.0, 0.0,
+            1.0, -1.0, 0.0,
+            -1.0, 1.0, 0.0,
+            1.0, 1.0, 0.0
+        ]);
+        const vertexBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
+
+        // Atribuindo os dados do buffer ao shader
+        const positionLocation = gl.getAttribLocation(program, 'a_position');
+        gl.vertexAttribPointer(positionLocation, 3, gl.FLOAT, false, 0, 0);
+        gl.enableVertexAttribArray(positionLocation);
+
+        // Definindo as variáveis uniformes
+        const iResolutionLocation = gl.getUniformLocation(program, 'iResolution');
+        const iTimeLocation = gl.getUniformLocation(program, 'iTime');
+        const iMouseLocation = gl.getUniformLocation(program, 'iMouse');
+
+        // Variáveis globais de mouse
+        let mouseX = 0, mouseY = 0;
+        canvas.addEventListener('mousemove', (event) => {
+            mouseX = event.clientX;
+            mouseY = event.clientY;
+        });
+
+        // Função para atualizar os parâmetros
+        let lastTime = 0;
+        function render(time) {
+            const deltaTime = (time - lastTime) / 1000;
+            lastTime = time;
+
+            // Passando os valores para os shaders
+            gl.uniform2f(iResolutionLocation, canvas.width, canvas.height);
+            gl.uniform1f(iTimeLocation, time / 1000);
+            gl.uniform2f(iMouseLocation, 
+                (mouseX / canvas.width) * 2 - 1,
+                (canvas.height - mouseY) / canvas.height * 2 - 1
+            );
+
+            // Limpando a tela e desenhando o quadro
+            gl.clearColor(0.0, 0.0, 0.0, 1.0);
+            gl.clear(gl.COLOR_BUFFER_BIT);
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+            requestAnimationFrame(render);
+        }
+
+        requestAnimationFrame(render);
+    </script>
+</body>
+</html>
